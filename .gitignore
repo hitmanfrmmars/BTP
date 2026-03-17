@@ -1,0 +1,45 @@
+# Simulation files
+*.vcd
+*.vvp
+sim_*
+*.wlf
+*.vstf
+
+# Waveform files
+*.shm
+*.trn
+*.dsn
+
+# Compiler outputs
+*.out
+*.o
+*.exe
+
+# Log files
+*.log
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# FPGA tool outputs
+*.bit
+*.bin
+*.rpt
+*.dcp
+*.jou
+*.str
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+
