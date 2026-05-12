@@ -14,7 +14,7 @@
 module gemm_soc_top #(
     parameter MEM_WORDS       = 32768,  // 128KB = 32K x 32-bit
     parameter FIRMWARE_FILE   = "firmware.hex",
-    parameter ARRAY_SIZE      = 4,
+    parameter ARRAY_SIZE      = 8,
     parameter ACC_WIDTH        = 48,
     parameter STACKADDR       = 32'h0002_0000,
     parameter PROGADDR_RESET  = 32'h0000_0000
@@ -66,8 +66,8 @@ module gemm_soc_top #(
         .ENABLE_REGS_16_31   (1),
         .ENABLE_REGS_DUALPORT(1),
         .ENABLE_PCPI         (1),
-        .ENABLE_MUL          (0),
-        .ENABLE_FAST_MUL     (0),
+        .ENABLE_MUL          (1),
+        .ENABLE_FAST_MUL     (1),
         .ENABLE_DIV          (0),
         .ENABLE_IRQ          (1),
         .ENABLE_IRQ_QREGS    (0),

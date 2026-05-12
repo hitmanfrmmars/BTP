@@ -1,5 +1,7 @@
 #include "gemm_accel.h"
 
+#define ALIGN4(x) (((x) + 3u) & ~3u)
+
 static gemm_result_t gemm_run_common(uint16_t M, uint16_t K, uint16_t N,
                                       uint32_t src_a, uint32_t src_b,
                                       uint32_t dst_c,
@@ -8,6 +10,10 @@ static gemm_result_t gemm_run_common(uint16_t M, uint16_t K, uint16_t N,
                                       uint32_t mode_bits)
 {
     gemm_result_t res;
+
+    stride_a = (uint16_t)ALIGN4(stride_a);
+    stride_b = (uint16_t)ALIGN4(stride_b);
+    stride_c = (uint16_t)ALIGN4(stride_c);
 
     /* Dimensions: DIM_MK = (M << 16) | K */
     gemm_cfg(((uint32_t)M << 16) | K, GEMM_REG_DIM_MK);
@@ -23,13 +29,12 @@ static gemm_result_t gemm_run_common(uint16_t M, uint16_t K, uint16_t N,
     gemm_cfg((uint32_t)stride_b, GEMM_REG_STRIDE_B);
     gemm_cfg((uint32_t)stride_c, GEMM_REG_STRIDE_C);
 
-    /* Start (writes CTRL register with mode + start bit internally via GEMM.START) */
-    /* If int16 mode is needed, pre-write the mode bit before starting. */
-    if (mode_bits)
-        gemm_cfg(mode_bits, GEMM_REG_CTRL);
-
-    res.status = gemm_start();
+    /* Atomically write mode bits + start bit via a single GEMM.CFG to CTRL.
+     * This avoids the GEMM.START instruction which hardcodes 0x01 and would
+     * overwrite mode/acc32 bits set by a preceding write. */
+    gemm_cfg(mode_bits | 0x01u, GEMM_REG_CTRL);
     res.cycles = gemm_wait();
+    res.status = 0;
 
     return res;
 }
@@ -41,6 +46,15 @@ gemm_result_t gemm_run_int8(uint16_t M, uint16_t K, uint16_t N,
 {
     return gemm_run_common(M, K, N, src_a, src_b, dst_c,
                            stride_a, stride_b, stride_c, 0);
+}
+
+gemm_result_t gemm_run_int8_acc32(uint16_t M, uint16_t K, uint16_t N,
+                                   uint32_t src_a, uint32_t src_b, uint32_t dst_c,
+                                   uint16_t stride_a, uint16_t stride_b,
+                                   uint16_t stride_c)
+{
+    return gemm_run_common(M, K, N, src_a, src_b, dst_c,
+                           stride_a, stride_b, stride_c, GEMM_OUTPUT_ACC32);
 }
 
 gemm_result_t gemm_run_int16(uint16_t M, uint16_t K, uint16_t N,

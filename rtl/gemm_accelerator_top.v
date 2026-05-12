@@ -4,7 +4,7 @@
 // Bus interfaces: AXI4-Lite slave (config), AXI4 master (main memory DMA).
 // Features: clock gating for idle MAC units, interrupt output, cycle counter.
 module gemm_accelerator_top #(
-    parameter ARRAY_SIZE  = 4,
+    parameter ARRAY_SIZE  = 8,
     parameter ACC_WIDTH   = 48,
     parameter ADDR_WIDTH  = 32,
     parameter DATA_WIDTH  = 32
@@ -52,7 +52,7 @@ module gemm_accelerator_top #(
     // =====================================================
 
     // Register file outputs
-    wire        cfg_start, cfg_mode, cfg_irq_en;
+    wire        cfg_start, cfg_mode, cfg_irq_en, cfg_output_acc32;
     wire [15:0] cfg_dim_m, cfg_dim_k, cfg_dim_n;
     wire [ADDR_WIDTH-1:0] cfg_src_a, cfg_src_b, cfg_dst_c;
     wire [15:0] cfg_stride_a, cfg_stride_b, cfg_stride_c;
@@ -65,10 +65,10 @@ module gemm_accelerator_top #(
     wire        dma_done_w;
 
     // Tiling engine -> matmul controller
-    wire        tile_matmul_start, tile_matmul_mode;
+    wire        tile_matmul_start, tile_matmul_mode, tile_matmul_output_acc32;
     wire [9:0]  tile_matmul_a_base, tile_matmul_b_base, tile_matmul_c_base;
     wire        tile_matmul_accumulate;
-    wire [2:0]  tile_matmul_eff_rows, tile_matmul_eff_k;
+    wire [3:0]  tile_matmul_eff_rows, tile_matmul_eff_k;
     wire [9:0]  tile_matmul_spad_stride;
     wire        matmul_done_w;
 
@@ -132,7 +132,7 @@ module gemm_accelerator_top #(
         .clk(clk), .rst(rst),
         .wr_addr(rf_wr_addr), .wr_data(rf_wr_data), .wr_en(rf_wr_en),
         .rd_addr(rf_rd_addr), .rd_data(axi_rd_data), .rd_en(rf_rd_en),
-        .cfg_start(cfg_start), .cfg_mode(cfg_mode), .cfg_irq_en(cfg_irq_en),
+        .cfg_start(cfg_start), .cfg_mode(cfg_mode), .cfg_irq_en(cfg_irq_en), .cfg_output_acc32(cfg_output_acc32),
         .cfg_dim_m(cfg_dim_m), .cfg_dim_k(cfg_dim_k), .cfg_dim_n(cfg_dim_n),
         .cfg_src_a(cfg_src_a), .cfg_src_b(cfg_src_b), .cfg_dst_c(cfg_dst_c),
         .cfg_stride_a(cfg_stride_a), .cfg_stride_b(cfg_stride_b), .cfg_stride_c(cfg_stride_c),
@@ -164,7 +164,7 @@ module gemm_accelerator_top #(
         .ADDR_WIDTH(ADDR_WIDTH)
     ) u_tiling (
         .clk(clk), .rst(rst),
-        .start(cfg_start), .mode(cfg_mode),
+        .start(cfg_start), .mode(cfg_mode), .output_acc32(cfg_output_acc32),
         .dim_m(cfg_dim_m), .dim_k(cfg_dim_k), .dim_n(cfg_dim_n),
         .src_a(cfg_src_a), .src_b(cfg_src_b), .dst_c(cfg_dst_c),
         .stride_a(cfg_stride_a), .stride_b(cfg_stride_b), .stride_c(cfg_stride_c),
@@ -180,6 +180,7 @@ module gemm_accelerator_top #(
         .matmul_c_base(tile_matmul_c_base), .matmul_accumulate(tile_matmul_accumulate),
         .matmul_eff_rows(tile_matmul_eff_rows), .matmul_eff_k(tile_matmul_eff_k),
         .matmul_spad_stride(tile_matmul_spad_stride),
+        .matmul_output_acc32(tile_matmul_output_acc32),
         .matmul_done(matmul_done_w),
         .swap_banks(swap_banks_w)
     );
@@ -211,7 +212,7 @@ module gemm_accelerator_top #(
     scratchpad_double_buf #(
         .ADDR_WIDTH(10),
         .DATA_WIDTH(32),
-        .BANK_DEPTH(256)
+        .BANK_DEPTH(512)
     ) u_spad (
         .clk(clk), .rst(rst),
         .swap_banks(swap_banks_w),
@@ -230,6 +231,7 @@ module gemm_accelerator_top #(
     ) u_ctrl (
         .clk(clk), .rst(rst),
         .start(tile_matmul_start), .mode(tile_matmul_mode),
+        .output_acc32(tile_matmul_output_acc32),
         .accumulate(tile_matmul_accumulate),
         .eff_rows(tile_matmul_eff_rows), .eff_k(tile_matmul_eff_k),
         .spad_row_stride(tile_matmul_spad_stride),

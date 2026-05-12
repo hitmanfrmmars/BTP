@@ -4,7 +4,7 @@
 // Vivado synthesizes this as the top module for accelerator-only metrics.
 //
 module gemm_accel_synth_wrapper #(
-    parameter ARRAY_SIZE = 4,
+    parameter ARRAY_SIZE = 8,
     parameter ACC_WIDTH  = 48
 ) (
     input  wire        clk,
@@ -170,7 +170,7 @@ module gemm_soc_synth_wrapper (
 
     gemm_soc_synth_top #(
         .MEM_WORDS(32768),
-        .ARRAY_SIZE(4),
+        .ARRAY_SIZE(8),
         .ACC_WIDTH(48),
         .STACKADDR(32'h0002_0000),
         .PROGADDR_RESET(32'h0000_0000)

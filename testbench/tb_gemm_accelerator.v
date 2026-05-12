@@ -6,7 +6,7 @@
 module tb_gemm_accelerator;
     parameter ADDR_WIDTH = 32;
     parameter DATA_WIDTH = 32;
-    parameter ARRAY_SIZE = 4;
+    parameter ARRAY_SIZE = 8;
     parameter ACC_WIDTH  = 48;
 
     reg clk, rst;
@@ -327,7 +327,7 @@ module tb_gemm_accelerator;
                         32'h1000, 32'h2000, 32'h3000,
                         16'd8, 16'd8, 16'd8, 1'b1);
         start_gemm(1'b1, 1'b0);
-        wait_done(20000, ok);
+        wait_done(30000, ok);
 
         if (!ok) begin $display("  FAIL: Did not complete"); errors = errors + 1; end
         else begin
@@ -815,6 +815,47 @@ module tb_gemm_accelerator;
         total_errors = total_errors + errors;
 
         // ============================================================
+        // TEST 14: 16x16 GEMM (multi-tile with 8x8 array)
+        // A = all 1, B = all 1, C[i][j] = 16
+        // ============================================================
+        test_num = 14;
+        errors = 0;
+        $display("\n=== TEST %0d: 16x16 multi-tile GEMM ===", test_num);
+        clear_mem;
+
+        // A at 0x1000 stride=16 (16 bytes per row)
+        for (r = 0; r < 16; r = r + 1)
+            for (c = 0; c < 4; c = c + 1)
+                main_mem[14'h0400 + r*4 + c] = 32'h01010101;
+
+        // B at 0x2000 stride=16
+        for (r = 0; r < 16; r = r + 1)
+            for (c = 0; c < 4; c = c + 1)
+                main_mem[14'h0800 + r*4 + c] = 32'h01010101;
+
+        configure_gemm(16'd16, 16'd16, 16'd16,
+                        32'h1000, 32'h2000, 32'h3000,
+                        16'd16, 16'd16, 16'd16, 1'b0);
+        start_gemm(1'b0, 1'b0);
+        wait_done(50000, ok);
+
+        if (!ok) begin $display("  FAIL: Timeout"); errors = errors + 1; end
+        else begin
+            for (r = 0; r < 16; r = r + 1)
+                for (c = 0; c < 4; c = c + 1) begin
+                    status = main_mem[14'h0C00 + r*4 + c];
+                    if (status !== 32'h10101010) begin
+                        $display("  FAIL: C row%0d word%0d = %h, expected 10101010", r, c, status);
+                        errors = errors + 1;
+                    end
+                end
+        end
+
+        if (errors == 0) $display("  PASS: Test %0d passed (16x16 all=16)", test_num);
+        else $display("  ** Test %0d: %0d failures **", test_num, errors);
+        total_errors = total_errors + errors;
+
+        // ============================================================
         // FINAL SUMMARY
         // ============================================================
         @(posedge clk); @(posedge clk);
@@ -825,7 +866,7 @@ module tb_gemm_accelerator;
 
     // Timeout watchdog
     initial begin
-        #2000000;
+        #10000000;
         $display("TIMEOUT: Test did not complete in time");
         $finish;
     end

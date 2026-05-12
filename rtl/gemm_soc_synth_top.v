@@ -11,7 +11,7 @@
 //
 module gemm_soc_synth_top #(
     parameter MEM_WORDS       = 32768,
-    parameter ARRAY_SIZE      = 4,
+    parameter ARRAY_SIZE      = 8,
     parameter ACC_WIDTH       = 48,
     parameter STACKADDR       = 32'h0002_0000,
     parameter PROGADDR_RESET  = 32'h0000_0000

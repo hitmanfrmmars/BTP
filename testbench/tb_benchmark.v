@@ -20,8 +20,8 @@ module tb_benchmark;
 
     gemm_soc_top #(
         .MEM_WORDS     (32768),
-        .FIRMWARE_FILE ("firmware.hex"),
-        .ARRAY_SIZE    (4),
+        .FIRMWARE_FILE ("benchmark.hex"),
+        .ARRAY_SIZE    (8),
         .ACC_WIDTH     (48),
         .STACKADDR     (32'h0002_0000),
         .PROGADDR_RESET(32'h0000_0000)
@@ -66,6 +66,13 @@ module tb_benchmark;
                             test_num = test_num + 1;
                             $display("");
                             $display("--- Test %0d: %0dx%0d GEMM (int8) ---", test_num, cur_size, cur_size);
+                            parse_state = S_SW_CYC;
+                        end
+                        else if (debug_data[31:16] == 16'hACC3) begin
+                            cur_size = debug_data[15:0];
+                            test_num = test_num + 1;
+                            $display("");
+                            $display("--- Test %0d: %0dx%0d GEMM (acc32) ---", test_num, cur_size, cur_size);
                             parse_state = S_SW_CYC;
                         end
                     end
@@ -115,7 +122,7 @@ module tb_benchmark;
 
         $display("===========================================");
         $display("  GEMM Benchmark: Software vs. Hardware");
-        $display("  PicoRV32 @ 100 MHz, 4x4 MAC array");
+        $display("  PicoRV32 RV32IM @ 100 MHz, 8x8 MAC array");
         $display("===========================================");
 
         fork
@@ -123,7 +130,7 @@ module tb_benchmark;
                 wait (test_done);
             end
             begin
-                repeat (20000000) @(posedge clk);
+                repeat (60_000_000) @(posedge clk);
                 $display("[TIMEOUT] Benchmark did not complete.");
                 $finish;
             end

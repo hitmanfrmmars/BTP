@@ -1,6 +1,7 @@
-// Streaming Matrix Multiplication Controller v2
+// Streaming Matrix Multiplication Controller v2 (Parameterized)
 // Uses output-stationary dataflow with broadcast MAC array.
 // Supports int8/int16 modes, configurable spad_row_stride for macro-tile addressing.
+// Fully parameterized for any power-of-2 ARRAY_SIZE (4, 8, 16, ...).
 module matmul_controller_v2 #(
     parameter ARRAY_SIZE = 4,
     parameter ACC_WIDTH  = 48
@@ -10,10 +11,11 @@ module matmul_controller_v2 #(
 
     input wire        start,
     input wire        mode,              // 0=int8, 1=int16
+    input wire        output_acc32,      // 1=write full 32-bit accumulator per element
     input wire        accumulate,        // 1=don't clear accumulators
-    input wire [2:0]  eff_rows,          // 1..4 valid A/C rows
-    input wire [2:0]  eff_k,             // 1..4 valid K passes
-    input wire [9:0]  spad_row_stride,   // byte distance between rows in scratchpad
+    input wire [3:0]  eff_rows,          // 0=ARRAY_SIZE, 1..ARRAY_SIZE-1=partial
+    input wire [3:0]  eff_k,             // 0=ARRAY_SIZE, 1..ARRAY_SIZE-1=partial
+    input wire [9:0]  spad_row_stride,
     input wire [9:0]  a_base_addr,
     input wire [9:0]  b_base_addr,
     input wire [9:0]  c_base_addr,
@@ -33,6 +35,17 @@ module matmul_controller_v2 #(
     input wire [ACC_WIDTH-1:0] result_matrix [0:ARRAY_SIZE-1][0:ARRAY_SIZE-1]
 );
 
+    // ======================== Derived Parameters ========================
+    localparam WPR8      = ARRAY_SIZE / 4;            // words per row, int8
+    localparam WPR16     = ARRAY_SIZE / 2;            // words per row, int16
+    localparam MAX_A_WDS = ARRAY_SIZE * WPR16;        // max A words (int16)
+    localparam MAX_B_WDS = WPR16;                     // max B words per K-row
+    localparam MAX_WB    = ARRAY_SIZE * ARRAY_SIZE;   // max write-back words (acc32)
+    localparam MAX_IDX   = (MAX_A_WDS > MAX_WB) ? MAX_A_WDS : MAX_WB;
+    localparam IDX_W     = $clog2(MAX_IDX + 1);      // index bit-width
+    localparam [9:0] C_STRIDE_ACC32 = ARRAY_SIZE * 4; // C row stride in acc32 mode (bytes)
+
+    // ======================== FSM States ========================
     localparam S_IDLE        = 4'd0;
     localparam S_INIT        = 4'd1;
     localparam S_LOAD_A_WAIT = 4'd2;
@@ -45,52 +58,78 @@ module matmul_controller_v2 #(
     localparam S_DONE        = 4'd9;
 
     reg [3:0]  state;
-    reg [1:0]  pass_k;
-    reg [2:0]  a_load_idx;
-    reg [2:0]  write_idx;
+    reg [3:0]  pass_k;
+    reg [IDX_W-1:0] a_load_idx;
+    reg [IDX_W-1:0] write_idx;
     reg [1:0]  drain_cnt;
-    reg        b_word_sub;
-    reg [31:0] a_row_words [0:7];
-    reg [31:0] b_row_words [0:1];
+    reg [2:0]  b_word_sub;
+    reg [31:0] a_row_words [0:MAX_A_WDS-1];
+    reg [31:0] b_row_words [0:MAX_B_WDS-1];
 
-    reg [2:0]  eff_rows_reg, eff_k_reg;
+    reg [3:0]  eff_rows_reg, eff_k_reg;
     reg [9:0]  stride_reg;
     reg        mode_reg;
+    reg        output_acc32_reg;
 
-    wire [3:0] a_words_int8  = {1'b0, eff_rows_reg} - 4'd1;
-    wire [3:0] a_words_int16 = {eff_rows_reg, 1'b0} - 4'd1;
-    wire [2:0] a_load_max = mode_reg ? a_words_int16[2:0] : a_words_int8[2:0];
-    wire [2:0] write_max  = mode_reg ? a_words_int16[2:0] : a_words_int8[2:0];
+    // ======================== Computed Limits ========================
+    wire [IDX_W-1:0] a_load_max = mode_reg
+        ? (eff_rows_reg * WPR16 - 1)
+        : (eff_rows_reg * WPR8  - 1);
+    wire [IDX_W-1:0] write_max = output_acc32_reg
+        ? (eff_rows_reg * ARRAY_SIZE[IDX_W-1:0] - 1)
+        : a_load_max;
+    wire [2:0] b_wpr = mode_reg ? WPR16[2:0] : WPR8[2:0];
 
-    // Address computations using stride_reg
-    // int8: 1 word/row, row r at base + r * stride
-    // int16: 2 words/row, row r word w at base + r * stride + w*4
-    // For A loading, a_load_idx: int8 idx=row, int16 idx=row*2+word
+    // Write-back row/column decode
+    wire [3:0] wb_row  = output_acc32_reg
+        ? (write_idx / ARRAY_SIZE)
+        : (mode_reg ? (write_idx / WPR16) : (write_idx / WPR8));
+    wire [3:0] wb_woff = mode_reg ? (write_idx % WPR16) : (write_idx % WPR8);
+    wire [3:0] wb_col0 = output_acc32_reg
+        ? (write_idx % ARRAY_SIZE)
+        : (mode_reg ? (wb_woff * 2) : (wb_woff * 4));
+
+    // ======================== Address Functions ========================
     function [9:0] a_addr;
-        input [2:0] idx;
+        input [IDX_W-1:0] idx;
+        reg [IDX_W-1:0] row, woff;
         begin
-            if (mode_reg)
-                a_addr = a_base_addr + {1'b0, idx[2:1]} * stride_reg + {7'd0, idx[0], 2'b00};
-            else
-                a_addr = a_base_addr + {1'b0, idx[1:0]} * stride_reg;
+            if (mode_reg) begin
+                row  = idx / WPR16;
+                woff = idx % WPR16;
+            end else begin
+                row  = idx / WPR8;
+                woff = idx % WPR8;
+            end
+            a_addr = a_base_addr + row[3:0] * stride_reg + {4'd0, woff[2:0], 2'b00};
         end
     endfunction
 
     function [9:0] b_addr;
-        input [1:0] pk;
-        input       wsub;
+        input [3:0] pk;
+        input [2:0] wsub;
         begin
-            b_addr = b_base_addr + {2'd0, pk} * stride_reg + {7'd0, wsub, 2'b00};
+            b_addr = b_base_addr + pk * stride_reg + {5'd0, wsub, 2'b00};
         end
     endfunction
 
     function [9:0] c_addr;
-        input [2:0] idx;
+        input [IDX_W-1:0] idx;
+        reg [IDX_W-1:0] row, woff;
         begin
-            if (mode_reg)
-                c_addr = c_base_addr + {1'b0, idx[2:1]} * stride_reg + {7'd0, idx[0], 2'b00};
-            else
-                c_addr = c_base_addr + {1'b0, idx[1:0]} * stride_reg;
+            if (output_acc32_reg) begin
+                row  = idx / ARRAY_SIZE;
+                woff = idx % ARRAY_SIZE;
+                c_addr = c_base_addr + row[3:0] * C_STRIDE_ACC32 + {4'd0, woff[2:0], 2'b00};
+            end else if (mode_reg) begin
+                row  = idx / WPR16;
+                woff = idx % WPR16;
+                c_addr = c_base_addr + row[3:0] * stride_reg + {4'd0, woff[2:0], 2'b00};
+            end else begin
+                row  = idx / WPR8;
+                woff = idx % WPR8;
+                c_addr = c_base_addr + row[3:0] * stride_reg + {4'd0, woff[2:0], 2'b00};
+            end
         end
     endfunction
 
@@ -115,6 +154,7 @@ module matmul_controller_v2 #(
         end
     endfunction
 
+    // ======================== Main FSM ========================
     integer i;
 
     always @(posedge clk) begin
@@ -128,18 +168,19 @@ module matmul_controller_v2 #(
             spad_wdata <= 32'd0;
             mac_enable    <= 1'b0;
             mac_clear_acc <= 1'b0;
-            pass_k     <= 2'd0;
-            a_load_idx <= 3'd0;
-            write_idx  <= 3'd0;
+            pass_k     <= 4'd0;
+            a_load_idx <= {IDX_W{1'b0}};
+            write_idx  <= {IDX_W{1'b0}};
             drain_cnt  <= 2'd0;
-            b_word_sub <= 1'b0;
-            eff_rows_reg  <= 3'd4;
-            eff_k_reg     <= 3'd4;
-            stride_reg    <= 10'd4;
-            mode_reg      <= 1'b0;
-            b_row_words[0] <= 32'd0;
-            b_row_words[1] <= 32'd0;
-            for (i = 0; i < 8; i = i + 1)
+            b_word_sub <= 3'd0;
+            eff_rows_reg     <= ARRAY_SIZE[3:0];
+            eff_k_reg        <= ARRAY_SIZE[3:0];
+            stride_reg       <= 10'd4;
+            mode_reg         <= 1'b0;
+            output_acc32_reg <= 1'b0;
+            for (i = 0; i < MAX_B_WDS; i = i + 1)
+                b_row_words[i] <= 32'd0;
+            for (i = 0; i < MAX_A_WDS; i = i + 1)
                 a_row_words[i] <= 32'd0;
             for (i = 0; i < ARRAY_SIZE; i = i + 1) begin
                 a_col[i] <= 16'd0;
@@ -156,23 +197,24 @@ module matmul_controller_v2 #(
                     done <= 1'b0;
                     busy <= 1'b0;
                     if (start) begin
-                        busy         <= 1'b1;
-                        pass_k       <= 2'd0;
-                        a_load_idx   <= 3'd0;
-                        write_idx    <= 3'd0;
-                        b_word_sub   <= 1'b0;
-                        eff_rows_reg <= (eff_rows == 3'd0) ? 3'd4 : eff_rows;
-                        eff_k_reg    <= (eff_k == 3'd0) ? 3'd4 : eff_k;
-                        stride_reg   <= spad_row_stride;
-                        mode_reg     <= mode;
-                        state        <= S_INIT;
+                        busy             <= 1'b1;
+                        pass_k           <= 4'd0;
+                        a_load_idx       <= {IDX_W{1'b0}};
+                        write_idx        <= {IDX_W{1'b0}};
+                        b_word_sub       <= 3'd0;
+                        eff_rows_reg     <= (eff_rows == 4'd0) ? ARRAY_SIZE[3:0] : eff_rows;
+                        eff_k_reg        <= (eff_k == 4'd0)    ? ARRAY_SIZE[3:0] : eff_k;
+                        stride_reg       <= spad_row_stride;
+                        mode_reg         <= mode;
+                        output_acc32_reg <= output_acc32;
+                        state            <= S_INIT;
                     end
                 end
 
                 S_INIT: begin
-                    spad_addr  <= a_addr(3'd0);
+                    spad_addr  <= a_addr({IDX_W{1'b0}});
                     spad_re    <= 1'b1;
-                    a_load_idx <= 3'd0;
+                    a_load_idx <= {IDX_W{1'b0}};
                     state      <= S_LOAD_A_WAIT;
                 end
 
@@ -184,13 +226,13 @@ module matmul_controller_v2 #(
                     a_row_words[a_load_idx] <= spad_rdata;
 
                     if (a_load_idx < a_load_max) begin
-                        spad_addr  <= a_addr(a_load_idx + 3'd1);
+                        spad_addr  <= a_addr(a_load_idx + 1);
                         spad_re    <= 1'b1;
-                        a_load_idx <= a_load_idx + 3'd1;
+                        a_load_idx <= a_load_idx + 1;
                         state      <= S_LOAD_A_WAIT;
                     end else begin
-                        b_word_sub <= 1'b0;
-                        spad_addr  <= b_addr(2'd0, 1'b0);
+                        b_word_sub <= 3'd0;
+                        spad_addr  <= b_addr(pass_k, 3'd0);
                         spad_re    <= 1'b1;
                         state      <= S_LOAD_B_WAIT;
                     end
@@ -203,13 +245,13 @@ module matmul_controller_v2 #(
                 S_LOAD_B_CAP: begin
                     b_row_words[b_word_sub] <= spad_rdata;
 
-                    if (mode_reg && b_word_sub == 1'b0) begin
-                        b_word_sub <= 1'b1;
-                        spad_addr  <= b_addr(pass_k, 1'b1);
+                    if (b_word_sub < b_wpr - 3'd1) begin
+                        b_word_sub <= b_word_sub + 3'd1;
+                        spad_addr  <= b_addr(pass_k, b_word_sub + 3'd1);
                         spad_re    <= 1'b1;
                         state      <= S_LOAD_B_WAIT;
                     end else begin
-                        b_word_sub <= 1'b0;
+                        b_word_sub <= 3'd0;
                         state      <= S_COMPUTE;
                     end
                 end
@@ -217,20 +259,28 @@ module matmul_controller_v2 #(
                 S_COMPUTE: begin
                     for (i = 0; i < ARRAY_SIZE; i = i + 1) begin
                         if (mode_reg == 1'b0) begin
-                            a_col[i] <= {8'd0, extract_byte(a_row_words[i], pass_k)};
-                            b_row[i] <= {8'd0, b_row_words[0][i*8 +: 8]};
+                            a_col[i] <= {8'd0, extract_byte(
+                                a_row_words[i * WPR8 + (pass_k >> 2)],
+                                pass_k[1:0])};
+                            b_row[i] <= {8'd0, extract_byte(
+                                b_row_words[i / 4],
+                                i % 4)};
                         end else begin
-                            a_col[i] <= extract_halfword(a_row_words[i*2 + pass_k[1]], pass_k[0]);
-                            b_row[i] <= extract_halfword(b_row_words[i/2], i%2);
+                            a_col[i] <= extract_halfword(
+                                a_row_words[i * WPR16 + (pass_k >> 1)],
+                                pass_k[0]);
+                            b_row[i] <= extract_halfword(
+                                b_row_words[i / 2],
+                                i % 2);
                         end
                     end
                     mac_enable    <= 1'b1;
-                    mac_clear_acc <= (pass_k == 2'd0) & ~accumulate;
+                    mac_clear_acc <= (pass_k == 4'd0) & ~accumulate;
 
-                    if (pass_k < (eff_k_reg - 3'd1)) begin
-                        pass_k     <= pass_k + 2'd1;
-                        b_word_sub <= 1'b0;
-                        spad_addr  <= b_addr(pass_k + 2'd1, 1'b0);
+                    if (pass_k < (eff_k_reg - 4'd1)) begin
+                        pass_k     <= pass_k + 4'd1;
+                        b_word_sub <= 3'd0;
+                        spad_addr  <= b_addr(pass_k + 4'd1, 3'd0);
                         spad_re    <= 1'b1;
                         state      <= S_LOAD_B_WAIT;
                     end else begin
@@ -241,7 +291,7 @@ module matmul_controller_v2 #(
 
                 S_DRAIN: begin
                     if (drain_cnt >= 2'd1) begin
-                        write_idx <= 3'd0;
+                        write_idx <= {IDX_W{1'b0}};
                         state     <= S_WRITE_BACK;
                     end else begin
                         drain_cnt <= drain_cnt + 2'd1;
@@ -251,31 +301,27 @@ module matmul_controller_v2 #(
                 S_WRITE_BACK: begin
                     spad_addr <= c_addr(write_idx);
 
-                    if (mode_reg == 1'b0) begin
+                    if (output_acc32_reg) begin
+                        spad_wdata <= result_matrix[wb_row[2:0]][wb_col0[2:0]][31:0];
+                    end else if (mode_reg == 1'b0) begin
                         spad_wdata <= {
-                            result_matrix[write_idx[1:0]][3][7:0],
-                            result_matrix[write_idx[1:0]][2][7:0],
-                            result_matrix[write_idx[1:0]][1][7:0],
-                            result_matrix[write_idx[1:0]][0][7:0]
+                            result_matrix[wb_row[2:0]][wb_col0[2:0] + 3'd3][7:0],
+                            result_matrix[wb_row[2:0]][wb_col0[2:0] + 3'd2][7:0],
+                            result_matrix[wb_row[2:0]][wb_col0[2:0] + 3'd1][7:0],
+                            result_matrix[wb_row[2:0]][wb_col0[2:0] + 3'd0][7:0]
                         };
                     end else begin
-                        if (write_idx[0] == 1'b0)
-                            spad_wdata <= {
-                                result_matrix[write_idx[2:1]][1][15:0],
-                                result_matrix[write_idx[2:1]][0][15:0]
-                            };
-                        else
-                            spad_wdata <= {
-                                result_matrix[write_idx[2:1]][3][15:0],
-                                result_matrix[write_idx[2:1]][2][15:0]
-                            };
+                        spad_wdata <= {
+                            result_matrix[wb_row[2:0]][wb_col0[2:0] + 3'd1][15:0],
+                            result_matrix[wb_row[2:0]][wb_col0[2:0] + 3'd0][15:0]
+                        };
                     end
                     spad_we <= 1'b1;
 
                     if (write_idx >= write_max)
                         state <= S_DONE;
                     else
-                        write_idx <= write_idx + 3'd1;
+                        write_idx <= write_idx + 1;
                 end
 
                 S_DONE: begin

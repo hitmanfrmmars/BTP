@@ -13,6 +13,7 @@ module tiling_engine #(
 
     input wire        start,
     input wire        mode,
+    input wire        output_acc32,
     input wire [15:0] dim_m,
     input wire [15:0] dim_k,
     input wire [15:0] dim_n,
@@ -43,9 +44,10 @@ module tiling_engine #(
     output reg [9:0]  matmul_b_base,
     output reg [9:0]  matmul_c_base,
     output reg        matmul_accumulate,
-    output reg [2:0]  matmul_eff_rows,
-    output reg [2:0]  matmul_eff_k,
+    output reg [3:0]  matmul_eff_rows,
+    output reg [3:0]  matmul_eff_k,
     output reg [9:0]  matmul_spad_stride,
+    output reg        matmul_output_acc32,
     input wire        matmul_done,
 
     output reg        swap_banks
@@ -99,7 +101,13 @@ module tiling_engine #(
     reg dma_load_done;
     reg compute_done_flag;
 
+    // Auto-align user strides to 4-byte word boundaries (DMA safety net)
+    wire [15:0] aligned_stride_a = (stride_a + 16'd3) & 16'hFFFC;
+    wire [15:0] aligned_stride_b = (stride_b + 16'd3) & 16'hFFFC;
+    wire [15:0] aligned_stride_c = (stride_c + 16'd3) & 16'hFFFC;
+
     // Mode-dependent scratchpad geometry
+    wire [15:0] out_elem_bytes = output_acc32 ? 16'd4 : (mode ? 16'd2 : 16'd1);
     wire [15:0] elem_bytes    = mode ? 16'd2 : 16'd1;
     wire [15:0] macro_words   = mode ? (MTS[15:0] >> 1) : (MTS[15:0] >> 2);
     wire [15:0] spad_row_byt  = {macro_words[13:0], 2'b00};
@@ -123,24 +131,29 @@ module tiling_engine #(
     wire [15:0] cur_eff_k = (cur_rem_k >= MTS[15:0]) ? MTS[15:0] : cur_rem_k;
     wire [15:0] cur_eff_n = (cur_rem_n >= MTS[15:0]) ? MTS[15:0] : cur_rem_n;
 
-    // DMA addresses for nxt tile
+    // DMA addresses for nxt tile (uses aligned strides for memory addressing)
     wire [ADDR_WIDTH-1:0] nxt_a_addr = src_a
-        + ({16'd0, nxt_m} * MTS[15:0]) * {16'd0, stride_a}
+        + ({16'd0, nxt_m} * MTS[15:0]) * {16'd0, aligned_stride_a}
         + ({16'd0, nxt_k} * MTS[15:0]) * {16'd0, elem_bytes};
     wire [ADDR_WIDTH-1:0] nxt_b_addr = src_b
-        + ({16'd0, nxt_k} * MTS[15:0]) * {16'd0, stride_b}
+        + ({16'd0, nxt_k} * MTS[15:0]) * {16'd0, aligned_stride_b}
         + ({16'd0, nxt_n} * MTS[15:0]) * {16'd0, elem_bytes};
 
-    // DMA store address for cur tile
+    // DMA store address for cur tile (uses out_elem_bytes for column offset)
     wire [ADDR_WIDTH-1:0] cur_c_addr = dst_c
-        + ({16'd0, cur_m} * MTS[15:0]) * {16'd0, stride_c}
-        + ({16'd0, cur_n} * MTS[15:0]) * {16'd0, elem_bytes};
+        + ({16'd0, cur_m} * MTS[15:0]) * {16'd0, aligned_stride_c}
+        + ({16'd0, cur_n} * MTS[15:0]) * {16'd0, out_elem_bytes};
 
     // Effective store width: only write the words that contain valid columns.
     // Prevents partial-N tiles from overwriting adjacent output memory.
-    wire [15:0] cur_store_words = mode
-        ? ((cur_eff_n + 16'd1) >> 1)    // int16: 2 elements per word
-        : ((cur_eff_n + 16'd3) >> 2);   // int8:  4 elements per word
+    wire [15:0] cur_store_words = output_acc32
+        ? cur_eff_n                         // acc32: 1 element per word
+        : (mode
+            ? ((cur_eff_n + 16'd1) >> 1)    // int16: 2 elements per word
+            : ((cur_eff_n + 16'd3) >> 2));  // int8:  4 elements per word
+
+    // C region scratchpad row stride (matmul writes AS elements per row)
+    wire [15:0] c_spad_row_byt = output_acc32 ? {AS[13:0], 2'b00} : spad_row_byt;
 
     // Sub-tile addresses (for compute on compute-side bank)
     wire [9:0] sub_m_x_as = {6'd0, sub_m[1:0], 2'b00};
@@ -159,8 +172,8 @@ module tiling_engine #(
     // Effective sub-tile dimensions
     wire [15:0] eff_m_sub_full = cur_eff_m - {12'd0, sub_m} * AS[15:0];
     wire [15:0] eff_k_sub_full = cur_eff_k - {12'd0, sub_k} * AS[15:0];
-    wire [2:0]  eff_m_sub = (eff_m_sub_full >= AS[15:0]) ? AS[2:0] : eff_m_sub_full[2:0];
-    wire [2:0]  eff_k_sub = (eff_k_sub_full >= AS[15:0]) ? AS[2:0] : eff_k_sub_full[2:0];
+    wire [3:0]  eff_m_sub = (eff_m_sub_full >= AS[15:0]) ? AS[3:0] : eff_m_sub_full[3:0];
+    wire [3:0]  eff_k_sub = (eff_k_sub_full >= AS[15:0]) ? AS[3:0] : eff_k_sub_full[3:0];
 
     function [15:0] ceil_div_mts;
         input [15:0] x;
@@ -223,9 +236,10 @@ module tiling_engine #(
             matmul_b_base  <= 10'd0;
             matmul_c_base  <= 10'd0;
             matmul_accumulate <= 1'b0;
-            matmul_eff_rows   <= 3'd4;
-            matmul_eff_k      <= 3'd4;
-            matmul_spad_stride<= 10'd4;
+            matmul_eff_rows   <= AS[3:0];
+            matmul_eff_k      <= AS[3:0];
+            matmul_spad_stride    <= 10'd4;
+            matmul_output_acc32   <= 1'b0;
             cur_m <= 16'd0; cur_n <= 16'd0; cur_k <= 16'd0;
             nxt_m <= 16'd0; nxt_n <= 16'd0; nxt_k <= 16'd0;
             num_macro_m <= 16'd0; num_macro_n <= 16'd0; num_macro_k <= 16'd0;
@@ -276,7 +290,7 @@ module tiling_engine #(
                             dma_dst_addr  <= {22'd0, SPAD_A_BASE};
                             dma_x_count   <= macro_words;
                             dma_y_count   <= nxt_eff_m;
-                            dma_src_stride<= stride_a;
+                            dma_src_stride<= aligned_stride_a;
                             dma_dst_stride<= spad_row_byt;
                             dma_burst_len <= macro_words[3:0] - 4'd1;
                             d_state       <= D_WAIT_A;
@@ -291,7 +305,7 @@ module tiling_engine #(
                             dma_dst_addr  <= {22'd0, spad_b_base_w};
                             dma_x_count   <= macro_words;
                             dma_y_count   <= nxt_eff_k;
-                            dma_src_stride<= stride_b;
+                            dma_src_stride<= aligned_stride_b;
                             dma_dst_stride<= spad_row_byt;
                             dma_burst_len <= macro_words[3:0] - 4'd1;
                             d_state       <= D_WAIT_B;
@@ -342,7 +356,7 @@ module tiling_engine #(
                             dma_dst_addr  <= {22'd0, SPAD_A_BASE};
                             dma_x_count   <= macro_words;
                             dma_y_count   <= nxt_eff_m;
-                            dma_src_stride<= stride_a;
+                            dma_src_stride<= aligned_stride_a;
                             dma_dst_stride<= spad_row_byt;
                             dma_burst_len <= macro_words[3:0] - 4'd1;
                             d_state       <= D_WAIT_A;
@@ -357,7 +371,7 @@ module tiling_engine #(
                             dma_dst_addr  <= {22'd0, spad_b_base_w};
                             dma_x_count   <= macro_words;
                             dma_y_count   <= nxt_eff_k;
-                            dma_src_stride<= stride_b;
+                            dma_src_stride<= aligned_stride_b;
                             dma_dst_stride<= spad_row_byt;
                             dma_burst_len <= macro_words[3:0] - 4'd1;
                             d_state       <= D_WAIT_B;
@@ -375,15 +389,16 @@ module tiling_engine #(
                     // ---------- Compute sub-FSM ----------
                     case (c_state)
                         C_COMPUTE: begin
-                            matmul_start       <= 1'b1;
-                            matmul_mode        <= mode;
-                            matmul_a_base      <= a_sub_base;
-                            matmul_b_base      <= b_sub_base;
-                            matmul_c_base      <= c_sub_base;
-                            matmul_accumulate  <= (cur_k > 16'd0) | (sub_k > 4'd0);
-                            matmul_eff_rows    <= (eff_m_sub == 3'd0) ? 3'd4 : eff_m_sub;
-                            matmul_eff_k       <= (eff_k_sub == 3'd0) ? 3'd4 : eff_k_sub;
-                            matmul_spad_stride <= spad_row_byt[9:0];
+                            matmul_start        <= 1'b1;
+                            matmul_mode         <= mode;
+                            matmul_output_acc32 <= output_acc32;
+                            matmul_a_base       <= a_sub_base;
+                            matmul_b_base       <= b_sub_base;
+                            matmul_c_base       <= c_sub_base;
+                            matmul_accumulate   <= (cur_k > 16'd0) | (sub_k > 4'd0);
+                            matmul_eff_rows     <= eff_m_sub;
+                            matmul_eff_k        <= eff_k_sub;
+                            matmul_spad_stride  <= spad_row_byt[9:0];
                             num_sub_m          <= ceil_div_as(cur_eff_m);
                             num_sub_n          <= ceil_div_as(cur_eff_n);
                             num_sub_k          <= ceil_div_as(cur_eff_k);
@@ -448,8 +463,8 @@ module tiling_engine #(
                     dma_dst_addr  <= cur_c_addr;
                     dma_x_count   <= cur_store_words;
                     dma_y_count   <= cur_eff_m;
-                    dma_src_stride<= spad_row_byt;
-                    dma_dst_stride<= stride_c;
+                    dma_src_stride<= c_spad_row_byt;
+                    dma_dst_stride<= aligned_stride_c;
                     dma_burst_len <= cur_store_words[3:0] - 4'd1;
                     m_state       <= M_WAIT_STORE;
                 end

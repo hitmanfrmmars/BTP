@@ -41,6 +41,7 @@
 #define GEMM_MODE_INT8       0
 #define GEMM_MODE_INT16      (1u << 1)
 #define GEMM_IRQ_ENABLE      (1u << 2)
+#define GEMM_OUTPUT_ACC32    (1u << 3)
 
 /* Debug output address */
 #define DEBUG_ADDR  ((volatile uint32_t *)0x10000000)
@@ -113,6 +114,24 @@ static inline int16_t unpack_i16(uint32_t word, int idx)
 }
 
 /* ================================================================
+ * DMA alignment helpers
+ *
+ * The DMA engine operates on 32-bit words. Row strides MUST be
+ * multiples of 4 bytes so that each row begins at a word boundary.
+ * The driver auto-aligns strides passed to gemm_run_*, but data
+ * in memory must be laid out with the aligned stride.  Use PAD4()
+ * when allocating / initialising matrix buffers.
+ * ================================================================ */
+#define PAD4(x) (((x) + 3u) & ~3u)
+
+/* Compute the byte stride for an int8 matrix with `cols` columns */
+#define GEMM_STRIDE_U8(cols)  ((uint16_t)PAD4(cols))
+/* Compute the byte stride for an int16 matrix with `cols` columns */
+#define GEMM_STRIDE_I16(cols) ((uint16_t)PAD4((cols) * 2u))
+/* Compute the byte stride for a 32-bit accumulator output matrix with `cols` columns */
+#define GEMM_STRIDE_ACC32(cols) ((uint16_t)PAD4((cols) * 4u))
+
+/* ================================================================
  * High-level driver API
  * ================================================================ */
 
@@ -125,9 +144,9 @@ typedef struct {
  * gemm_run_int8 -- Run an MxK * KxN int8 GEMM.
  *
  * A, B, C are byte addresses in SoC memory.
- * stride_a/b = bytes between consecutive rows (typically K or N).
- * stride_c   = bytes between consecutive output rows (typically N,
- *              since output is packed int8).
+ * stride_a/b/c = bytes between consecutive rows.
+ * Strides are auto-aligned to 4-byte boundaries by the driver,
+ * but data must be stored with PAD4-aligned strides in memory.
  *
  * Blocks until the operation completes.
  */
@@ -137,11 +156,23 @@ gemm_result_t gemm_run_int8(uint16_t M, uint16_t K, uint16_t N,
                              uint16_t stride_c);
 
 /*
+ * gemm_run_int8_acc32 -- Run an MxK * KxN int8 GEMM with 32-bit accumulator output.
+ *
+ * Identical to gemm_run_int8 except each output element is a full 32-bit
+ * accumulator value (1 word per element) instead of truncated 8-bit.
+ * stride_c should be N*4 bytes (use GEMM_STRIDE_ACC32(N)).
+ */
+gemm_result_t gemm_run_int8_acc32(uint16_t M, uint16_t K, uint16_t N,
+                                   uint32_t src_a, uint32_t src_b, uint32_t dst_c,
+                                   uint16_t stride_a, uint16_t stride_b,
+                                   uint16_t stride_c);
+
+/*
  * gemm_run_int16 -- Run an MxK * KxN int16 GEMM.
  *
  * Same interface as int8, but input elements are 16-bit.
- * stride_a/b = bytes between rows (typically K*2 or N*2).
- * stride_c   = bytes between output rows (typically N*2).
+ * stride_a/b/c = bytes between consecutive rows.
+ * Strides are auto-aligned to 4-byte boundaries.
  */
 gemm_result_t gemm_run_int16(uint16_t M, uint16_t K, uint16_t N,
                               uint32_t src_a, uint32_t src_b, uint32_t dst_c,

@@ -67,10 +67,43 @@ if %errorlevel% neq 0 (set /a FAIL+=1) else (set /a PASS+=1)
 REM --- Test 7: Full Accelerator ---
 echo.
 echo --- Test: Full GEMM Accelerator ---
-iverilog -o sim_accel.vvp rtl/scratchpad_mem.v rtl/scratchpad_double_buf.v rtl/mac_unit_v2.v rtl/mac_array_v2.v rtl/dma_engine.v rtl/matmul_controller_v2.v rtl/tiling_engine.v rtl/gemm_regfile.v rtl/gemm_custom_insn.v rtl/gemm_accelerator_top.v testbench/tb_gemm_accelerator.v
+iverilog -o sim_accel.vvp rtl/scratchpad_mem.v rtl/scratchpad_double_buf.v rtl/mac_unit_v2.v rtl/mac_array_v2.v rtl/dma_engine.v rtl/matmul_controller_v2.v rtl/tiling_engine.v rtl/gemm_regfile.v rtl/gemm_custom_insn.v rtl/gemm_pcpi_adapter.v rtl/gemm_accelerator_top.v testbench/tb_gemm_accelerator.v
 if %errorlevel% neq 0 (set /a FAIL+=1 & goto summary)
 vvp sim_accel.vvp
 if %errorlevel% neq 0 (set /a FAIL+=1) else (set /a PASS+=1)
+
+:t8
+REM --- Test 8: SoC Integration (demo firmware) ---
+echo.
+echo --- Test: SoC Integration (demo firmware) ---
+cd testbench
+iverilog -g2005-sv -o sim_soc.vvp ../rtl/scratchpad_mem.v ../rtl/scratchpad_double_buf.v ../rtl/dpram_bytewrite.v ../rtl/mac_unit_v2.v ../rtl/mac_array_v2.v ../rtl/dma_engine.v ../rtl/matmul_controller_v2.v ../rtl/tiling_engine.v ../rtl/gemm_regfile.v ../rtl/gemm_pcpi_adapter.v ../rtl/gemm_accelerator_top.v ../rtl/riscv/picorv32.v ../rtl/gemm_soc_top.v tb_gemm_soc.v
+if %errorlevel% neq 0 (set /a FAIL+=1 & cd .. & goto t9)
+vvp sim_soc.vvp
+if %errorlevel% neq 0 (set /a FAIL+=1) else (set /a PASS+=1)
+cd ..
+
+:t9
+REM --- Test 9: Stress Test (21 patterns) ---
+echo.
+echo --- Test: Stress Test (21 patterns, 8x8 array) ---
+cd testbench
+iverilog -g2005-sv -o sim_stress.vvp ../rtl/scratchpad_mem.v ../rtl/scratchpad_double_buf.v ../rtl/dpram_bytewrite.v ../rtl/mac_unit_v2.v ../rtl/mac_array_v2.v ../rtl/dma_engine.v ../rtl/matmul_controller_v2.v ../rtl/tiling_engine.v ../rtl/gemm_regfile.v ../rtl/gemm_pcpi_adapter.v ../rtl/gemm_accelerator_top.v ../rtl/riscv/picorv32.v ../rtl/gemm_soc_top.v tb_stress_test.v
+if %errorlevel% neq 0 (set /a FAIL+=1 & cd .. & goto t10)
+vvp sim_stress.vvp
+if %errorlevel% neq 0 (set /a FAIL+=1) else (set /a PASS+=1)
+cd ..
+
+:t10
+REM --- Test 10: NN Layers (FC + Conv2D) ---
+echo.
+echo --- Test: NN Layers (FC + Conv2D, 8x8 array) ---
+cd testbench
+iverilog -g2005-sv -o sim_nn.vvp ../rtl/scratchpad_mem.v ../rtl/scratchpad_double_buf.v ../rtl/dpram_bytewrite.v ../rtl/mac_unit_v2.v ../rtl/mac_array_v2.v ../rtl/dma_engine.v ../rtl/matmul_controller_v2.v ../rtl/tiling_engine.v ../rtl/gemm_regfile.v ../rtl/gemm_pcpi_adapter.v ../rtl/gemm_accelerator_top.v ../rtl/riscv/picorv32.v ../rtl/gemm_soc_top.v tb_nn_layers.v
+if %errorlevel% neq 0 (set /a FAIL+=1 & cd .. & goto summary)
+vvp sim_nn.vvp
+if %errorlevel% neq 0 (set /a FAIL+=1) else (set /a PASS+=1)
+cd ..
 
 :summary
 echo.

@@ -31,49 +31,49 @@ SIZE     = $(CROSS)size
 # Python
 PYTHON  ?= C:/Users/aryan/AppData/Local/Programs/Python/Python313/python.exe
 
-# Architecture flags
-ARCH    ?= -march=rv32i -mabi=ilp32
+# Architecture flags (rv32im enables hardware MUL instructions)
+ARCH    ?= -march=rv32im -mabi=ilp32
 
 # Compiler flags
 CFLAGS   = $(ARCH) -Os -Wall -Wextra \
            -ffreestanding -nostdlib -nostartfiles \
            -Iinclude
 
-# Linker flags
+# Linker flags (-lgcc kept for ABI compat; RV32IM uses native mul)
 LDFLAGS  = $(ARCH) -nostdlib -nostartfiles \
            -Tlink.ld -Wl,--gc-sections \
-           -Wl,-Map=build/firmware.map
+           -Wl,-Map=build/firmware.map \
+           -lgcc
 
-# Source files
+# Common source
 ASM_SRC  = src/crt0.S
-C_SRC    = src/gemm_accel.c src/main.c
+DRV_SRC  = src/gemm_accel.c
 
 # Build directory
 BUILD    = build
-
-# Object files
-ASM_OBJ  = $(BUILD)/crt0.o
-C_OBJ    = $(patsubst src/%.c,$(BUILD)/%.o,$(C_SRC))
-ALL_OBJ  = $(ASM_OBJ) $(C_OBJ)
-
-# Targets
-ELF      = $(BUILD)/firmware.elf
-BIN      = $(BUILD)/firmware.bin
-HEX      = $(BUILD)/firmware.hex
 
 # Total memory words (128KB / 4 = 32768)
 MEM_WORDS = 32768
 
 # ============================================================
+# Firmware targets -- each produces $(BUILD)/<name>.hex
+#   make firmware       (default -- demo main.c)
+#   make stress_test    (21-pattern stress test)
+#   make nn_layers      (FC + Conv2D NN layer demo)
+#   make benchmark      (SW vs HW benchmark)
+#   make all            (build all targets)
+# ============================================================
 
-.PHONY: all clean disasm size sim
+TARGETS = firmware stress_test nn_layers benchmark mnist_inference
 
-all: $(HEX)
+.PHONY: all clean disasm size sim $(TARGETS)
+
+all: $(TARGETS)
 
 $(BUILD):
 	mkdir -p $(BUILD)
 
-# Assemble startup code
+# Assemble startup code (shared by all targets)
 $(BUILD)/crt0.o: src/crt0.S | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -81,29 +81,76 @@ $(BUILD)/crt0.o: src/crt0.S | $(BUILD)
 $(BUILD)/%.o: src/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Link
-$(ELF): $(ALL_OBJ) link.ld
-	$(CC) $(LDFLAGS) -o $@ $(ALL_OBJ)
+# Compile driver (shared)
+$(BUILD)/gemm_accel.o: src/gemm_accel.c | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Extract flat binary
-$(BIN): $(ELF)
+# Generic rule: link name.elf from crt0.o + gemm_accel.o + name.o
+define BUILD_FW
+$(BUILD)/$(1).elf: $(BUILD)/crt0.o $(BUILD)/gemm_accel.o $(BUILD)/$(1).o link.ld
+	$(CC) $(LDFLAGS) -o $$@ $(BUILD)/crt0.o $(BUILD)/gemm_accel.o $(BUILD)/$(1).o
+
+$(BUILD)/$(1).bin: $(BUILD)/$(1).elf
+	$(OBJCOPY) -O binary $$< $$@
+
+$(BUILD)/$(1).hex: $(BUILD)/$(1).bin
+	$(PYTHON) bin2hex.py $$< $$@ $(MEM_WORDS)
+
+$(1): $(BUILD)/$(1).hex
+	@echo "Built $(BUILD)/$(1).hex"
+endef
+
+# Map firmware target to main.c (the original demo)
+$(BUILD)/main.o: src/main.c | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/firmware.elf: $(BUILD)/crt0.o $(BUILD)/gemm_accel.o $(BUILD)/main.o link.ld
+	$(CC) $(LDFLAGS) -o $@ $(BUILD)/crt0.o $(BUILD)/gemm_accel.o $(BUILD)/main.o
+
+$(BUILD)/firmware.bin: $(BUILD)/firmware.elf
 	$(OBJCOPY) -O binary $< $@
 
-# Convert to $readmemh hex format
-$(HEX): $(BIN)
+$(BUILD)/firmware.hex: $(BUILD)/firmware.bin
 	$(PYTHON) bin2hex.py $< $@ $(MEM_WORDS)
 
-# Copy to testbench directory for simulation
-sim: $(HEX)
-	cp $(HEX) ../testbench/firmware.hex
+firmware: $(BUILD)/firmware.hex
+	@echo "Built $(BUILD)/firmware.hex"
+
+# Generate build rules for non-default targets
+$(eval $(call BUILD_FW,stress_test))
+$(eval $(call BUILD_FW,nn_layers))
+$(eval $(call BUILD_FW,benchmark))
+$(eval $(call BUILD_FW,mnist_inference))
+
+# Copy chosen firmware to testbench directory
+sim: firmware
+	cp $(BUILD)/firmware.hex ../testbench/firmware.hex
 	@echo "firmware.hex copied to ../testbench/"
 
-# Disassembly listing
-disasm: $(ELF)
+sim-stress: stress_test
+	cp $(BUILD)/stress_test.hex ../testbench/stress_test.hex
+	@echo "stress_test.hex copied to ../testbench/"
+
+sim-nn: nn_layers
+	cp $(BUILD)/nn_layers.hex ../testbench/nn_layers.hex
+	@echo "nn_layers.hex copied to ../testbench/"
+
+sim-bench: benchmark
+	cp $(BUILD)/benchmark.hex ../testbench/benchmark.hex
+	@echo "benchmark.hex copied to ../testbench/"
+
+sim-mnist: mnist_inference
+	cp $(BUILD)/mnist_inference.hex ../testbench/mnist_inference.hex
+	@echo "mnist_inference.hex copied to ../testbench/"
+
+sim-all: sim sim-stress sim-nn sim-bench sim-mnist
+
+# Disassembly listing (default firmware)
+disasm: $(BUILD)/firmware.elf
 	$(OBJDUMP) -d -M no-aliases $<
 
-# Section sizes
-size: $(ELF)
+# Section sizes (default firmware)
+size: $(BUILD)/firmware.elf
 	$(SIZE) $<
 
 clean:

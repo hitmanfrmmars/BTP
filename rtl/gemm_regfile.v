@@ -1,7 +1,7 @@
 // GEMM Accelerator Memory-Mapped Register File
 // AXI4-Lite slave interface for RISC-V configuration
 // Register map:
-//   0x00 CTRL     [0]=start, [1]=mode(int8/int16), [2]=irq_enable
+//   0x00 CTRL     [0]=start, [1]=mode(int8/int16), [2]=irq_enable, [3]=output_acc32
 //   0x04 STATUS   [0]=busy, [1]=done, [2]=error, [3]=overflow
 //   0x08 DIM_MK   [31:16]=M, [15:0]=K
 //   0x0C DIM_N    [15:0]=N
@@ -34,6 +34,7 @@ module gemm_regfile #(
     output wire        cfg_start,
     output wire        cfg_mode,
     output wire        cfg_irq_en,
+    output wire        cfg_output_acc32,
     output wire [15:0] cfg_dim_m,
     output wire [15:0] cfg_dim_k,
     output wire [15:0] cfg_dim_n,
@@ -148,9 +149,10 @@ module gemm_regfile #(
     end
 
     // Output assignments
-    assign cfg_start    = start_pulse;
-    assign cfg_mode     = reg_ctrl[1];
-    assign cfg_irq_en   = reg_ctrl[2];
+    assign cfg_start        = start_pulse;
+    assign cfg_mode         = reg_ctrl[1];
+    assign cfg_irq_en       = reg_ctrl[2];
+    assign cfg_output_acc32 = reg_ctrl[3];
     assign cfg_dim_m    = reg_dim_mk[31:16];
     assign cfg_dim_k    = reg_dim_mk[15:0];
     assign cfg_dim_n    = reg_dim_n[15:0];

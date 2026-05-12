@@ -16,7 +16,7 @@ module tb_gemm_soc;
     gemm_soc_top #(
         .MEM_WORDS     (32768),
         .FIRMWARE_FILE ("firmware.hex"),
-        .ARRAY_SIZE    (4),
+        .ARRAY_SIZE    (8),
         .ACC_WIDTH     (48),
         .STACKADDR     (32'h0002_0000),
         .PROGADDR_RESET(32'h0000_0000)

@@ -1,0 +1,114 @@
+Archive member included to satisfy reference by file (symbol)
+
+C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+                              build/nn_inference.o (__mulsi3)
+
+Discarded input sections
+
+ .data          0x00000000        0x0 build/crt0.o
+ .bss           0x00000000        0x0 build/crt0.o
+ .data          0x00000000        0x0 build/gemm_accel.o
+ .bss           0x00000000        0x0 build/gemm_accel.o
+ .data          0x00000000        0x0 build/nn_inference.o
+ .bss           0x00000000        0x0 build/nn_inference.o
+ .data          0x00000000        0x0 C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+ .bss           0x00000000        0x0 C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+MEM              0x00000000         0x00020000         xrw
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+LOAD build/crt0.o
+LOAD build/gemm_accel.o
+LOAD build/nn_inference.o
+LOAD C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a
+
+.vectors        0x00000000       0x20
+ *(.vectors)
+ .vectors       0x00000000       0x20 build/crt0.o
+                0x00000000                _start
+                0x00000010                _irq_handler
+
+.text           0x00000020      0x82c
+ *(.text .text.*)
+ .text          0x00000020       0x30 build/crt0.o
+                0x00000020                _crt0_main
+ .text          0x00000050       0xcc build/gemm_accel.o
+                0x00000050                gemm_run_int8
+                0x000000b0                gemm_run_int16
+ .text          0x0000011c      0x1f0 build/nn_inference.o
+ .text.startup  0x0000030c      0x51c build/nn_inference.o
+                0x0000030c                main
+ .text          0x00000828       0x24 C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+                0x00000828                __mulsi3
+
+.rodata         0x0000084c       0x2d
+ *(.rodata .rodata.*)
+ .rodata        0x0000084c       0x2d build/nn_inference.o
+
+.rela.dyn       0x0000087c        0x0
+ .rela.text     0x0000087c        0x0 build/crt0.o
+
+.data           0x0000087c        0x0
+                0x0000087c                        _data_start = .
+ *(.data .data.*)
+                0x0000087c                        _data_end = .
+
+.bss            0x0000087c        0x0
+                0x0000087c                        _bss_start = .
+ *(.bss .bss.*)
+ *(COMMON)
+                0x0000087c                        _bss_end = .
+                0x0000087c                        _end = .
+                0x00000001                        ASSERT ((. <= 0x10000), Firmware too large -- overlaps matrix data area)
+                0x00020000                        _stack_top = 0x20000
+OUTPUT(build/nn_inference.elf elf32-littleriscv)
+
+.riscv.attributes
+                0x00000000       0x1c
+ .riscv.attributes
+                0x00000000       0x1a build/crt0.o
+ .riscv.attributes
+                0x0000001a       0x1c build/gemm_accel.o
+ .riscv.attributes
+                0x00000036       0x1c build/nn_inference.o
+ .riscv.attributes
+                0x00000052       0x1a C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+
+.comment        0x00000000       0x33
+ .comment       0x00000000       0x33 build/gemm_accel.o
+                                 0x34 (size before relaxing)
+ .comment       0x00000033        0x0 build/nn_inference.o
+                                 0x34 (size before relaxing)
+
+.note.GNU-stack
+                0x00000000        0x0
+ .note.GNU-stack
+                0x00000000        0x0 build/gemm_accel.o
+ .note.GNU-stack
+                0x00000000        0x0 build/nn_inference.o
+
+.debug_line     0x00000000       0x7a
+ .debug_line    0x00000000       0x7a C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+
+.debug_line_str
+                0x00000000      0x18e
+ .debug_line_str
+                0x00000000      0x18e C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+
+.debug_info     0x00000000       0x31
+ .debug_info    0x00000000       0x31 C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+
+.debug_abbrev   0x00000000       0x28
+ .debug_abbrev  0x00000000       0x28 C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+
+.debug_aranges  0x00000000       0x20
+ .debug_aranges
+                0x00000000       0x20 C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
+
+.debug_str      0x00000000      0x1a3
+ .debug_str     0x00000000      0x1a3 C:/Users/aryan/Downloads/xpack-riscv-none-elf-gcc-15.2.0-1-win32-x64/xpack-riscv-none-elf-gcc-15.2.0-1/bin/../lib/gcc/riscv-none-elf/15.2.0/rv32i/ilp32\libgcc.a(muldi3.o)
